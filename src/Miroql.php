@@ -29,8 +29,8 @@ class Miroql{
      * 
      * @return \PDOStatement An executed statement, ready for results to be fetched
      */
-    function executeQueryPdo($pdo, array $miroql, string $baseTable){
-        $query = $this->makeQuery($miroql, $baseTable);
+    function executeQueryPdo($pdo, array $miroql, string $baseTable, $params=null){
+        $query = $this->makeQuery($miroql, $baseTable, $params);
         $params = [];
         $sql = $query->build($params);
         $stmt = $pdo->prepare($sql);
@@ -41,7 +41,7 @@ class Miroql{
     /**
      * Given a Miroql query, return an SQL `Query` object
      */
-    function makeQuery(array $miroql, string $baseTable):Query{
+    function makeQuery(array $miroql, string $baseTable, $params=null):Query{
         // Find the selected fields
         if (empty($miroql['fields'])) throw new MiroqlException('No fields selected');
         $query = Query::select($this->makeSelectedColumns($miroql['fields'], $baseTable));
@@ -55,10 +55,10 @@ class Miroql{
         $realName = $translated->table;
         // $realName and $baseTable should both be safe thanks to the name translator
         $query->from("$realName AS `$baseTable`");
-        // Applu filters, sort, and group
+        // Apply filters, sort, and group
         if (!empty($miroql['selector'])){
             $filterBuilder = $query->whereBuilder();
-            $this->makeFilters($miroql['selector'], $baseTable, $filterBuilder);
+            $this->makeFilters($miroql['selector'], $baseTable, $params, $filterBuilder);
             $filterBuilder->end();
         }
         if (!empty($miroql['sort'])){
@@ -137,24 +137,25 @@ class Miroql{
      * @param string $baseTable The base table the report is running against
      * @param ?string $fieldName Used to pass the current field name on recusive calls; not used on the top-level call
      * @param ?FilterBuilder $builder Used to pass the current FilterBuilder on recusive calls; not used on the top-level call
+     * @param array|\Closure|null $params An associative array or callable that will be used to fetch any parameters which are found in the query
      * 
      * @internal
      */
-    function makeFilters(array $selector, string $baseTable, ?FilterBuilder $builder=null, ?string $fieldName = null):FilterBuilder{
+    function makeFilters(array $selector, string $baseTable, $params=null, ?FilterBuilder $builder=null, ?string $fieldName = null):FilterBuilder{
         if (\is_null($builder)) $builder = new FilterBuilder();
         foreach($selector as $key=>$value){
             if (\preg_match('/^\$(n?(?:and|or))$/', $key, $match)){
                 // Logical operator groups
                 $subBuilder = new FilterBuilder($builder, \strtoupper($match[1]));
                 foreach ($value as $subValue){
-                    $this->makeFilters($subValue, $baseTable, $subBuilder, $fieldName);
+                    $this->makeFilters($subValue, $baseTable, $params, $subBuilder, $fieldName);
                 }
                 $subBuilder->end();
             }
             elseif ($key === '$not'){
                 // Simple NOT operation (same as NAND group with only one item)
                 $subBuilder = $builder->begin_nand();
-                $this->makeFilters($value, $baseTable, $subBuilder, $fieldName);
+                $this->makeFilters($value, $baseTable, $params, $subBuilder, $fieldName);
                 $subBuilder->end();
             }
             elseif (\preg_match('/^\$((?:eq|neq?|lte?|gte?)|(?:not-)?(?:in|empty|like|contains|regex))$/', $key, $match)){
@@ -165,55 +166,57 @@ class Miroql{
                 // Explicit operator
                 switch ($match[1]){
                     case 'eq':
-                        $builder->eq($sqlFieldName, $value);
+                        $builder->eq($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'ne':
                     case 'neq':
-                        $builder->ne($sqlFieldName, $value);
+                        $builder->ne($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'lt':
-                        $builder->lt($sqlFieldName, $value);
+                        $builder->lt($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'lte':
-                        $builder->lte($sqlFieldName, $value);
+                        $builder->lte($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'gt':
-                        $builder->gt($sqlFieldName, $value);
+                        $builder->gt($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'gte':
-                        $builder->gte($sqlFieldName, $value);
+                        $builder->gte($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'in':
-                        $builder->in($sqlFieldName, $value);
+                        $builder->in($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'not-in':
-                        $builder->not_in($sqlFieldName, $value);
+                        $builder->not_in($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'empty':
+                        $value = $this->makeValue($value, $params);
                         if ($value) $builder->empty($sqlFieldName);
                         else $builder->not_empty($sqlFieldName);
                         break;
                     case 'not-empty':
+                        $value = $this->makeValue($value, $params);
                         if (!$value) $builder->empty($sqlFieldName);
                         else $builder->not_empty($sqlFieldName);
                         break;
                     case 'like':
-                        $builder->like($sqlFieldName, $value);
+                        $builder->like($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'not-like':
-                        $builder->not_like($sqlFieldName, $value);
+                        $builder->not_like($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'contains':
-                        $builder->like_in($sqlFieldName, $value);
+                        $builder->like_in($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'not-contains':
-                        $builder->not_like_in($sqlFieldName, $value);
+                        $builder->not_like_in($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'regex':
-                        $builder->regex($sqlFieldName, $value);
+                        $builder->regex($sqlFieldName, $this->makeValue($value, $params));
                         break;
                     case 'not-regex':
-                        $builder->not_regex($sqlFieldName, $value);
+                        $builder->not_regex($sqlFieldName, $this->makeValue($value, $params));
                         break;
                 }
             }
@@ -230,11 +233,11 @@ class Miroql{
                 if (\is_scalar($value) || \is_null($value)){
                     // Implicit equality
                     $newFieldName = $this->findSqlName($baseTable, $newFieldName);
-                    $builder->eq($newFieldName, $value);
+                    $builder->eq($newFieldName, $this->makeValue($value, $params));
                 }
                 else{
                     // Explicit operator or nested field below us
-                    $this->makeFilters($value, $baseTable, $builder, $newFieldName);
+                    $this->makeFilters($value, $baseTable, $params, $builder, $newFieldName);
                 }
             }
             else{
@@ -242,6 +245,31 @@ class Miroql{
             }
         }
         return $builder;
+    }
+
+    function makeValue($value, $params = null){
+        if (\is_string($value) && \str_starts_with($value, '@')){
+            // This is (maybe) a param and requires processing
+            $value = substr($value, 1);
+            if (\str_starts_with($value, '@')){
+                // Escaped (double) @ sign, not a param
+                return $value;
+            }
+            // Now we know it's a param for sure
+            if (is_array($params) && isset($params[$value])){
+                return $params[$value];
+            }
+            elseif($params instanceof \Closure){
+                return $params($value);
+            }
+            else{
+                throw new MiroqlException("Param '$value' not provided");
+            };
+        }
+        else{
+            // This is definitely not a param and can be returned directly
+            return $value;
+        }
     }
 
     /**

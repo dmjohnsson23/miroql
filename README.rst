@@ -79,6 +79,58 @@ Your translator is then passed to the Miroql engine:
     Queries are not built in a way that is compatible with ``mysqli``, due to using named 
     parameters in the generated SQL. You must use PDO to execute the generated SQL.
 
+---------------------
+Enabling Placeholders
+---------------------
+
+If you wish the engine to allow placeholder parameters, a third parameter can be passed to 
+:php:method:`Miroql::makeQuery`, which is either an associative array of parameters, or a closure
+that takes a parameter name and returns a value. (Placeholder parameters are explained below under 
+"Selectors".)
+
+.. code-block:: php
+
+    $params = [
+        'thing1'=>1,
+        'thing2'=>2,
+    ];
+    $query = $engine->makeQuery($miroqlQuery, $baseTable, $params);
+
+
+-----------------------
+Security Considerations
+-----------------------
+
+Miroql, by design, allows executing user-controlled queries against your database. However, 
+measures are in place to ensure a reasonable level of security. Namely,
+
+1. All table and column names are passed through your translator, offering you the chance to 
+   inspect, whitelist, sanitize, or otherwise control what data is actually accessed.
+2. Values are passed as prepared statement parameters rather than directly encoded, taking
+   advantage of a battle-tested escaping method.
+3. Your translator is able to inject additional filters into the generated queries, providing 
+   an opportunity for you to enforce your application's access controls.
+4. Miroql only generates ``SELECT`` statements.
+
+Thus, so long as your translator is correctly and safely implemented, using Miroql should be 
+secure. However, as an added safety measure, you can use a dedicated PDO instance to execute
+Miroql queries, which connects to the database using a user with limited permission. Miroql is
+also compatible with ``PDO::MYSQL_ATTR_MULTI_STATEMENTS=>false``, which you can enable to reduce
+the damage that could be done if a successful SQL injection is achieved. Combining a 
+well-implemented translator with both of these secondary precautions should result in solid 
+security.
+
+.. warning::
+
+    As this section implies, your translator implementation is crucial to the security of your
+    application when using Miroql. Take the time to give it the attention it deserves.
+
+    Best practicies include:
+
+    * Use an explicit list of known and allowed tables and columns
+    * Inspect the list of joined tables, and inject access control filters
+    * Keep in mind that the untranslated strings do come directly from untrusted input
+
 ~~~~~~~~~~~~~~~~~~~~~~
 Writing Miroql Queries
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -156,31 +208,40 @@ SQL. The properties in this object can be either of the following:
    This is equivilent to a simple equality statement. For example, :json:`{"user.name": "John"}`
    would translate to something like ``user.name = 'John'`` in SQL.
 
+   Placeholders are allowed in values. Placeholders are marked by the ``@`` sign. For example, 
+   :json:`{"user.name": "@name"}`. The engine must be configured to take advantage of placeholders,
+   as descibed above under "Enabling Placeholders".
+
+   To encode a literal string which begins with an ``@``, double it.  :json:`{"user.name": "@@john"}`
+   would translate to ``user.name = '@john'`` instead of representing a placeholder. Escaping is 
+   only needed if the first character of the string is an ``@``; any which appear in later 
+   positions are always treated as literal.
+
 2. A name string mapped to an operator object.
 
-    This enables the use of operators other than simple equality. For example, 
-    :json:`{"date":{"$gt":"2025-02-02"}}` would translate to something like ``date > '2025-02-02'``
-    in SQL.
+   This enables the use of operators other than simple equality. For example, 
+   :json:`{"date":{"$gt":"2025-02-02"}}` would translate to something like ``date > '2025-02-02'``
+   in SQL.
 
 3. A table name mapped to an object of column names, mapped to values or operators.
 
-    This allows :json:`{"user":{"name": "John"}}`, which is identical to :json:`{"user.name": "John"}`.
+   This allows :json:`{"user":{"name": "John"}}`, which is identical to :json:`{"user.name": "John"}`.
 
 4. :json:`"$and"` or :json:`"$or"` mapped to a array of nested selector objects.
 
-    This creates a paranthasized group with the specified logical operator when translated. For 
-    example, :json:`{"$or": [{"user.name": "John"}, {"user.name": "Sarah"}]}` would translate to
-    something like ``(user.name = 'John' OR user.name = 'Sarah')`` in SQL.
+   This creates a paranthasized group with the specified logical operator when translated. For 
+   example, :json:`{"$or": [{"user.name": "John"}, {"user.name": "Sarah"}]}` would translate to
+   something like ``(user.name = 'John' OR user.name = 'Sarah')`` in SQL.
 
 5. :json:`"$not"` mapped to a nested selector object.
 
-    This simply adds a ``NOT`` to the SQL generated by the nested object
+   This simply adds a ``NOT`` to the SQL generated by the nested object
 
 6. A name string mapped to an `"$and"`, :json:`"$or"`, or :json:`"$not"`.
 
-    This implements the same functionality as described above but allows inverting the order of
-    the nesting. This means that :json:`{"user.name": {"$or": [{"$eq": "John"}, {"$eq": "Sarah"}]}}`
-    should be identical to :json:`{"$or": [{"user.name": "John"}, {"user.name": "Sarah"}]}`
+   This implements the same functionality as described above but allows inverting the order of
+   the nesting. This means that :json:`{"user.name": {"$or": [{"$eq": "John"}, {"$eq": "Sarah"}]}}`
+   should be identical to :json:`{"$or": [{"user.name": "John"}, {"user.name": "Sarah"}]}`
 
 The following is a list of recognized operators:
 

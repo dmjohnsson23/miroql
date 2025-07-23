@@ -2,9 +2,9 @@
 namespace DMJohnson\Miroql;
 
 /**
- * Simple default name translator, mostly used for testing. 
+ * Simple default translator, mostly used for testing. 
  * 
- * It is recommended that a custom name translator be used. This one makes several (incorrect) 
+ * It is recommended that a custom translator be used. This one makes several (incorrect) 
  * assumptions:
  * 
  *  - Any syntacticlly correct keys are valid

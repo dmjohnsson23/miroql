@@ -2,6 +2,7 @@
 require_once __DIR__.'/../vendor/autoload.php';
 use DMJohnson\Miroql\SqlBuilder\Filters;
 use DMJohnson\Miroql\Miroql;
+use DMJohnson\Miroql\MiroqlException;
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
@@ -154,6 +155,55 @@ class MiroqlTest extends TestCase{
                 "@and" => [
                     ["user.f_name =" => "Charlie"],
                     ["user.l_name =" => "Smith"],
+                ]
+            ],
+            $filters
+        );
+    }
+    public function testMakeValueIgnores(){
+        $miroql = new Miroql();
+        $this->assertEquals(true, $miroql->makeValue(true, []));
+        $this->assertEquals(false, $miroql->makeValue(false, []));
+        $this->assertEquals(null, $miroql->makeValue(null, []));
+        $this->assertEquals(5, $miroql->makeValue(5, []));
+        $this->assertEquals(3.14, $miroql->makeValue(3.14, []));
+        $this->assertEquals('Stuff', $miroql->makeValue('Stuff', []));
+    }
+    public function testMakeValueEscape(){
+        $miroql = new Miroql();
+        $this->assertEquals('@things', $miroql->makeValue('@@things', []));
+    }
+    public function testMakeValueThrows(){
+        $this->expectException(MiroqlException::class);
+        $miroql = new Miroql();
+        $miroql->makeValue('@param', []);
+    }
+    public function testMakeValueArray(){
+        $miroql = new Miroql();
+        $this->assertEquals(123, $miroql->makeValue('@param', ['param'=>123]));
+    }
+    public function testMakeValueClosure(){
+        $miroql = new Miroql();
+        $this->assertEquals(123, $miroql->makeValue('@param', fn($name)=>123));
+    }
+    public function testMakeFiltersWithParams(){
+        $miroql = new Miroql();
+        $selector = [
+            '$and'=>[
+                ['veteran.f_name' => ['$eq'=>'@f_name']],
+                ['veteran.l_name' => ['$eq'=>'@l_name']]
+            ]
+        ];
+        $params = [
+            'f_name'=>"Charlie",
+            'l_name'=>"Smith",
+        ];
+        $filters = $miroql->makeFilters($selector, 'veteran', $params)->build()->toArraySyntax();
+        $this->assertEquals(
+            [
+                "@and" => [
+                    ["veteran.f_name =" => "Charlie"],
+                    ["veteran.l_name =" => "Smith"],
                 ]
             ],
             $filters
